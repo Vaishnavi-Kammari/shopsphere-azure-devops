@@ -1,7 +1,0 @@
-   services:
-     web:
-       image: httpd:2.4.63
-       container_name: web
-       ports:
-         - "8081:80"
-       restart: unless-stopped
