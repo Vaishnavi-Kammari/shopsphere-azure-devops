@@ -2,7 +2,7 @@
 trigger:
   branches:
     include:
-      - feature/shopsphere
+      - none
   paths:
     include:
       - backend/**
