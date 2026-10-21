@@ -1,4 +1,6 @@
+
 # ShopSphere CI/CD: feature/shopsphere -> build/test -> ACR -> AKS
+
 trigger:
   branches:
     include:
@@ -26,10 +28,11 @@ variables:
   resourceGroup: Test_Rg
   aksCluster: shopsphere-aks
   namespace: shopsphere
-  # Build ID makes every image immutable and unique.
+  # Build ID creates a unique tag for each pipeline run.
   imageTag: '$(Build.BuildId)'
 
 stages:
+  # Stage 1: Validate the backend and frontend.
   - stage: Validate
     displayName: Validate application
     jobs:
@@ -37,24 +40,29 @@ stages:
         displayName: Validate Spring Boot backend
         steps:
           - checkout: self
+
           - task: JavaToolInstaller@0
             displayName: Use Java 21
             inputs:
               versionSpec: '21'
               jdkArchitectureOption: x64
               jdkSourceOption: PreInstalled
+
           - script: mvn -B -f backend/pom.xml verify
             displayName: Maven verify
+
           - task: NodeTool@0
             displayName: Use Node.js 22
             inputs:
               versionSpec: '22.x'
+
           - script: |
               npm ci
               npm run build
             workingDirectory: frontend
             displayName: Build React frontend
 
+  # Stage 2: Build container images and push them to ACR.
   - stage: BuildAndPush
     displayName: Build and push images to ACR
     dependsOn: Validate
@@ -64,6 +72,7 @@ stages:
         displayName: Build container images
         steps:
           - checkout: self
+
           - task: Docker@2
             displayName: Build and push backend image
             inputs:
@@ -74,6 +83,7 @@ stages:
               buildContext: backend
               tags: |
                 $(imageTag)
+
           - task: Docker@2
             displayName: Build and push frontend image
             inputs:
@@ -85,21 +95,37 @@ stages:
               tags: |
                 $(imageTag)
 
+  # Stage 3: Deploy the application to AKS.
   - stage: Deploy
     displayName: Deploy to AKS
     dependsOn: BuildAndPush
     condition: succeeded()
     jobs:
       - deployment: DeployShopSphere
-        displayName: Apply Kubernetes manifests
+        displayName: Deploy ShopSphere to AKS
         environment: shopsphere-aks
         strategy:
           runOnce:
             deploy:
               steps:
                 - checkout: self
+
+                # First create the namespace.
                 - task: KubernetesManifest@1
-                  displayName: Deploy ShopSphere to AKS
+                  displayName: Create ShopSphere namespace
+                  inputs:
+                    action: deploy
+                    connectionType: azureResourceManager
+                    azureSubscriptionConnection: $(azureServiceConnection)
+                    azureResourceGroup: $(resourceGroup)
+                    kubernetesCluster: $(aksCluster)
+                    namespace: default
+                    manifests: |
+                      k8s/namespace.yaml
+
+                # Then deploy resources into the existing namespace.
+                - task: KubernetesManifest@1
+                  displayName: Deploy ShopSphere resources
                   inputs:
                     action: deploy
                     connectionType: azureResourceManager
@@ -108,7 +134,6 @@ stages:
                     kubernetesCluster: $(aksCluster)
                     namespace: $(namespace)
                     manifests: |
-                      k8s/namespace.yaml
                       k8s/configmap.yaml
                       k8s/service-account.yaml
                       k8s/secret-provider-class.yaml
@@ -120,8 +145,10 @@ stages:
                     containers: |
                       shopsphere.azurecr.io/$(imageRepositoryBackend):$(imageTag)
                       shopsphere.azurecr.io/$(imageRepositoryFrontend):$(imageTag)
+
+                # Verify the backend deployment.
                 - task: Kubernetes@1
-                  displayName: Verify rollout
+                  displayName: Verify backend rollout
                   inputs:
                     connectionType: Azure Resource Manager
                     azureSubscriptionEndpoint: $(azureServiceConnection)
@@ -130,6 +157,8 @@ stages:
                     namespace: $(namespace)
                     command: rollout
                     arguments: status deployment/shopsphere-backend --timeout=180s
+
+                # Verify the frontend deployment.
                 - task: Kubernetes@1
                   displayName: Verify frontend rollout
                   inputs:
