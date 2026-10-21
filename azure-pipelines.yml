@@ -122,19 +122,6 @@ stages:
                     manifests: |
                       k8s/namespace.yaml
 
-                # ONE-TIME CLEANUP: remove the stale Ingress that still carries the legacy
-                # kubernetes.io/ingress.class annotation. Delete this step after one green run.
-                - task: Kubernetes@1
-                  displayName: Remove stale Ingress (one-time)
-                  inputs:
-                    connectionType: Azure Resource Manager
-                    azureSubscriptionEndpoint: $(azureServiceConnection)
-                    azureResourceGroup: $(resourceGroup)
-                    kubernetesCluster: $(aksCluster)
-                    namespace: $(namespace)
-                    command: delete
-                    arguments: ingress shopsphere-ingress --ignore-not-found=true
-
                 # Then deploy resources into the existing namespace.
                 - task: KubernetesManifest@1
                   displayName: Deploy ShopSphere resources
