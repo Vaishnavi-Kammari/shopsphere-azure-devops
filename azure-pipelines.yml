@@ -16,6 +16,12 @@ trigger:
 
 pr: none
 
+parameters:
+  - name: updateDbPassword
+    displayName: Update db-password in Key Vault from secret variable dbPassword
+    type: boolean
+    default: false
+
 pool:
   vmImage: ubuntu-latest
 
@@ -27,6 +33,7 @@ variables:
   resourceGroup: Test_Rg
   aksCluster: shopsphere-aks
   namespace: shopsphere
+  keyVaultName: shopsphere-kv
   # Build ID creates a unique tag for each pipeline run.
   imageTag: '$(Build.BuildId)'
 
@@ -121,6 +128,37 @@ stages:
                     namespace: default
                     manifests: |
                       k8s/namespace.yaml
+
+                # OPTIONAL: only runs when the "updateDbPassword" box is ticked at run time.
+                # Requires a secret pipeline variable named dbPassword.
+                - ${{ if eq(parameters.updateDbPassword, true) }}:
+                    - task: AzureCLI@2
+                      displayName: Update db-password in Key Vault
+                      inputs:
+                        azureSubscription: $(azureServiceConnection)
+                        scriptType: bash
+                        scriptLocation: inlineScript
+                        inlineScript: |
+                          az keyvault secret set \
+                            --vault-name "$(keyVaultName)" \
+                            --name db-password \
+                            --value "$DB_PASSWORD" \
+                            --output none
+                          echo "db-password updated in Key Vault."
+                      env:
+                        DB_PASSWORD: $(dbPassword)
+
+                    # Delete the synced secret so new pods rebuild it from Key Vault.
+                    - task: Kubernetes@1
+                      displayName: Delete synced Kubernetes secret
+                      inputs:
+                        connectionType: Azure Resource Manager
+                        azureSubscriptionEndpoint: $(azureServiceConnection)
+                        azureResourceGroup: $(resourceGroup)
+                        kubernetesCluster: $(aksCluster)
+                        namespace: $(namespace)
+                        command: delete
+                        arguments: secret shopsphere-secrets --ignore-not-found=true
 
                 # Then deploy resources into the existing namespace.
                 - task: KubernetesManifest@1
