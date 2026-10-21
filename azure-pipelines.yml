@@ -1,0 +1,142 @@
+# ShopSphere CI/CD: feature/shopsphere -> build/test -> ACR -> AKS
+trigger:
+  branches:
+    include:
+      - feature/shopsphere
+  paths:
+    include:
+      - backend/**
+      - frontend/**
+      - k8s/**
+      - app/**
+      - azure-pipelines.yml
+      - docker-compose.yml
+      - .gitignore
+
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  imageRepositoryBackend: shopsphere-backend
+  imageRepositoryFrontend: shopsphere-frontend
+  dockerRegistryServiceConnection: shopsphere-acr
+  azureServiceConnection: shopsphere-azure
+  resourceGroup: Test_Rg
+  aksCluster: shopsphere-aks
+  namespace: shopsphere
+  # Build ID makes every image immutable and unique.
+  imageTag: '$(Build.BuildId)'
+
+stages:
+  - stage: Validate
+    displayName: Validate application
+    jobs:
+      - job: ValidateBackend
+        displayName: Validate Spring Boot backend
+        steps:
+          - checkout: self
+          - task: JavaToolInstaller@0
+            displayName: Use Java 21
+            inputs:
+              versionSpec: '21'
+              jdkArchitectureOption: x64
+              jdkSourceOption: PreInstalled
+          - script: mvn -B -f backend/pom.xml verify
+            displayName: Maven verify
+          - task: NodeTool@0
+            displayName: Use Node.js 22
+            inputs:
+              versionSpec: '22.x'
+          - script: |
+              npm ci
+              npm run build
+            workingDirectory: frontend
+            displayName: Build React frontend
+
+  - stage: BuildAndPush
+    displayName: Build and push images to ACR
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+      - job: BuildImages
+        displayName: Build container images
+        steps:
+          - checkout: self
+          - task: Docker@2
+            displayName: Build and push backend image
+            inputs:
+              command: buildAndPush
+              containerRegistry: $(dockerRegistryServiceConnection)
+              repository: $(imageRepositoryBackend)
+              Dockerfile: backend/Dockerfile
+              buildContext: backend
+              tags: |
+                $(imageTag)
+          - task: Docker@2
+            displayName: Build and push frontend image
+            inputs:
+              command: buildAndPush
+              containerRegistry: $(dockerRegistryServiceConnection)
+              repository: $(imageRepositoryFrontend)
+              Dockerfile: frontend/Dockerfile
+              buildContext: frontend
+              tags: |
+                $(imageTag)
+
+  - stage: Deploy
+    displayName: Deploy to AKS
+    dependsOn: BuildAndPush
+    condition: succeeded()
+    jobs:
+      - deployment: DeployShopSphere
+        displayName: Apply Kubernetes manifests
+        environment: shopsphere-aks
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+                - task: KubernetesManifest@1
+                  displayName: Deploy ShopSphere to AKS
+                  inputs:
+                    action: deploy
+                    connectionType: azureResourceManager
+                    azureSubscriptionConnection: $(azureServiceConnection)
+                    azureResourceGroup: $(resourceGroup)
+                    kubernetesCluster: $(aksCluster)
+                    namespace: $(namespace)
+                    manifests: |
+                      k8s/namespace.yaml
+                      k8s/configmap.yaml
+                      k8s/service-account.yaml
+                      k8s/secret-provider-class.yaml
+                      k8s/backend-service.yaml
+                      k8s/frontend-service.yaml
+                      k8s/ingress.yaml
+                      k8s/backend-deployment.yaml
+                      k8s/frontend-deployment.yaml
+                    containers: |
+                      shopsphere.azurecr.io/$(imageRepositoryBackend):$(imageTag)
+                      shopsphere.azurecr.io/$(imageRepositoryFrontend):$(imageTag)
+                - task: Kubernetes@1
+                  displayName: Verify rollout
+                  inputs:
+                    connectionType: Azure Resource Manager
+                    azureSubscriptionEndpoint: $(azureServiceConnection)
+                    azureResourceGroup: $(resourceGroup)
+                    kubernetesCluster: $(aksCluster)
+                    namespace: $(namespace)
+                    command: rollout
+                    arguments: status deployment/shopsphere-backend --timeout=180s
+                - task: Kubernetes@1
+                  displayName: Verify frontend rollout
+                  inputs:
+                    connectionType: Azure Resource Manager
+                    azureSubscriptionEndpoint: $(azureServiceConnection)
+                    azureResourceGroup: $(resourceGroup)
+                    kubernetesCluster: $(aksCluster)
+                    namespace: $(namespace)
+                    command: rollout
+                    arguments: status deployment/shopsphere-frontend --timeout=180s

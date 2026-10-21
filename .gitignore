@@ -1,0 +1,32 @@
+# Secrets and local environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+backend/.env
+frontend/.env
+frontend/.env.local
+
+# Dependencies and build outputs
+node_modules/
+frontend/node_modules/
+frontend/dist/
+backend/target/
+dist/
+target/
+
+# Logs, IDEs, OS files
+*.log
+npm-debug.log*
+.idea/
+.vscode/
+*.iml
+.DS_Store
+Thumbs.db
+hs_err_pid*
+
+# Local database backups / temporary files
+*.dump
+*.backup
+*.tmp
+coverage/
