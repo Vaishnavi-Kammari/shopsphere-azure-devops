@@ -7,6 +7,6 @@ data:
   DB_URL: "jdbc:postgresql://shopsphere-db.postgres.database.azure.com:5432/shopsphere?sslmode=require"
   DB_USERNAME: "shopsphere_app"
   # Replace with the public HTTPS origin of Application Gateway before deployment.
-  CORS_ALLOWED_ORIGINS: "http://20.204.212.4/"
+  CORS_ALLOWED_ORIGINS: "http://20.204.212.4"
   TOKEN_EXPIRY_HOURS: "8"
   SEED_DEMO_DATA: "false"
